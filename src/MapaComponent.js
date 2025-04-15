@@ -1,0 +1,494 @@
+import React, { useEffect, useState, useRef } from "react";
+import { MapContainer, TileLayer, GeoJSON, useMap, ZoomControl } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png",
+});
+
+const ZoomToFeature = ({ geojson, nomeProje }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (geojson) {
+      if (nomeProje === "TODOS") {
+        const layer = L.geoJSON(geojson);
+        map.flyToBounds(layer.getBounds(), {
+          padding: [30, 30],
+          duration: 1.5,
+          easeLinearity: 0.25
+        });
+      } else {
+        const feature = geojson.features.find(
+          (f) => f.properties.nome_proje === nomeProje
+        );
+        if (feature) {
+          const layer = L.geoJSON(feature);
+          map.flyToBounds(layer.getBounds(), {
+            maxZoom: 15,
+            duration: 1.5,
+            easeLinearity: 0.25
+          });
+        }
+      }
+    }
+  }, [geojson, nomeProje, map]);
+
+  return null;
+};
+
+const MapaComponent = () => {
+  const [assentamentos, setAssentamentos] = useState(null);
+  const [nomeProjetos, setNomeProjetos] = useState([]);
+  const [projetoSelecionado, setProjetoSelecionado] = useState("TODOS");
+  const [layersExtras, setLayersExtras] = useState({});
+  const [layersVisiveis, setLayersVisiveis] = useState({
+    Indigenas: true,
+    "Quilombolas": true,
+    "UC Estaduais": true,
+    "UC Federais": true,
+    "UC Municipais": true
+  });
+  const [caixaAltura, setCaixaAltura] = useState(0);
+  const caixaRef = useRef(null);
+
+  useEffect(() => {
+    fetch("/Assentamentos.geojson")
+      .then((res) => res.json())
+      .then((data) => {
+        setAssentamentos(data);
+        const nomes = [...new Set(data.features.map((f) => f.properties.nome_proje))].sort();
+        setNomeProjetos(nomes);
+      });
+
+    const extras = {
+      Indigenas: "#ffd5c2",
+      Quilombolas: "#c8553d",
+      "UC Estaduais": "#2d3047", 
+      "UC Federais": "#588b8b",
+      "UC Municipais": "#93b7be"
+    };
+
+    Object.entries(extras).forEach(([name, color]) => {
+      fetch(`/${name.replace(" ", "_")}.geojson`)
+        .then((res) => res.json())
+        .then((data) => {
+          setLayersExtras(prev => ({ ...prev, [name]: { data, color } }));
+        });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (caixaRef.current) {
+      setCaixaAltura(caixaRef.current.offsetHeight);
+    }
+  }, [projetoSelecionado]);
+
+  const onEachFeature = (feature, layer) => {
+    const props = feature.properties;
+    if ("nome_proje" in props) {
+      let content = `<strong>Nome:</strong> ${props.nome_proje || "Não informado"}<br/>`;
+      content += `<strong>Município:</strong> ${props.municipio || "Não informado"}<br/>`;
+      content += `<strong>CAR:</strong> ${props.numero_car || "Não informado"}<br/>`;
+      content += `<strong>Área (ha):</strong> ${props.area || "Não informado"}<br/>`;
+      layer.bindPopup(content);
+    } else if ("nome_uc" in props && "grupo_1" in props) {
+      let content = `<strong>Unidade de Conservação Estadual</strong><br/>`;
+      content += `<strong>Nome:</strong> ${props.nome_uc || "Não informado"}<br/>`;
+      content += `<strong>Legislação vigente:</strong> ${props.L_vigente || "Não informado"}<br/>`;
+      content += `<strong>Categoria:</strong> ${props.categori_a || "Não informado"}<br/>`;
+      content += `<strong>Área (ha):</strong> ${props.area_ha || "Não informado"}<br/>`;
+      content += `<strong>Nome Oficial:</strong> ${props.nome_ofici || "Não informado"}<br/>`;
+      content += `<strong>Nome abreviado:</strong> ${props.nome_abrv || "Não informado"}<br/>`;
+      content += `<strong>Grupo:</strong> ${props.grupo_1 || "Não informado"}<br/>`;
+      layer.bindPopup(content);
+    } else if ("nm_comunid" in props) {
+      // Popup para Terras Quilombolas
+      let content = `<strong>Terras Quilombolas</strong><br/>`;
+      content += `<strong>Nome da Comunidade:</strong> ${props.nm_comunid || "Não informado"}<br/>`;
+      content += `<strong>Município:</strong> ${props.nm_municip || "Não informado"}<br/>`;
+      content += `<strong>Responsável:</strong> ${props.responsave || "Não informado"}<br/>`;
+      layer.bindPopup(content);
+    } else if ("terrai_nom" in props) {
+      // Popup para Terras Indígenas
+      let content = `<strong>Terras Indígenas</strong><br/>`;
+      content += `<strong>Nome da Terra Indígena:</strong> ${props.terrai_nom || "Não informado"}<br/>`;
+      content += `<strong>Município:</strong> ${props.municipio_ || "Não informado"}<br/>`;
+      layer.bindPopup(content);
+    } else {
+      let content = `<strong>${props.nome || props.name || "Sem nome"}</strong><br/>`;
+      for (let key in props) {
+        if (key.toLowerCase() !== "nome" && key.toLowerCase() !== "name") {
+          content += `<strong>${key}:</strong> ${props[key]}<br/>`;
+        }
+      }
+      layer.bindPopup(content);
+    }
+  };
+
+  const renderMensagemCondicional = () => {
+    const semSobreposicao = ["PA Cascata", "PA Conjunto Dois Riachões", "PA Cosme Muniz", "PA Ressurreição", "PA Serra de Areia I e II"];
+    
+    if (semSobreposicao.includes(projetoSelecionado)) {
+      return (
+        <div style={{ color: "green", fontWeight: "bold", fontSize: "15px" }}>
+          Nenhuma sobreposição detectada!
+        </div>
+      );
+    }
+
+    switch(projetoSelecionado) {
+      case "PA Dandara dos Palmares":
+        return (
+          <div style={{ marginTop: "15px" }}>
+            <div style={{ color: "red", fontWeight: "bold", fontSize: "15px" }}>Sobreposição detectada</div>
+            <div>Área total do assentamento: 1351.63 ha</div>
+            <div>Área sobreposta total: 1351.63 ha</div>
+            <div>Porcentagem de sobreposição: 100.0%</div>
+            <div style={{ fontWeight: "bold", marginTop: "5px" }}>Sobreposição com a camada:</div>
+            <ul style={{ margin: "5px 0", paddingLeft: "20px" }}>
+              <li style={{ fontWeight: "bold" }}>UC Estaduais: 1351.63 ha (100.0%)</li>
+            </ul>
+            <div>Categoria: Área de Proteção Ambiental</div>
+            <div>Grupo: Uso Sustentável</div>
+          </div>
+        );
+      case "PA Fazenda Rochedo e Outras":
+        return (
+          <div style={{ marginTop: "15px" }}>
+            <div style={{ color: "red", fontWeight: "bold", fontSize: "15px" }}>Sobreposição detectada</div>
+            <div>Área total do assentamento: 355.49 ha</div>
+            <div>Área sobreposta total: 355.49 ha</div>
+            <div>Porcentagem de sobreposição: 100.0%</div>
+            <div style={{ fontWeight: "bold", marginTop: "5px" }}>Sobreposição com a camada:</div>
+            <ul style={{ margin: "5px 0", paddingLeft: "20px" }}>
+              <li style={{ fontWeight: "bold" }}>UC Estaduais: 355.49 ha (100.0%)</li>
+            </ul>
+            <div>Categoria: Área de Proteção Ambiental</div>
+            <div>Grupo: Uso Sustentável</div>
+          </div>
+        );
+      case "PA Nova Vida":
+        return (
+          <div style={{ marginTop: "15px" }}>
+            <div style={{ color: "red", fontWeight: "bold", fontSize: "15px" }}>Sobreposição detectada</div>
+            <div>Área total do assentamento: 609.96 ha</div>
+            <div>Área sobreposta total: 609.96 ha</div>
+            <div>Porcentagem de sobreposição: 100.0%</div>
+            <div style={{ fontWeight: "bold", marginTop: "5px" }}>Sobreposição com a camada:</div>
+            <ul style={{ margin: "5px 0", paddingLeft: "20px" }}>
+              <li style={{ fontWeight: "bold" }}>UC Estaduais: 609.96 ha (100.0%)</li>
+            </ul>
+            <div>Categoria: Área de Proteção Ambiental</div>
+            <div>Grupo: Uso Sustentável</div>
+          </div>
+        );
+      case "PA Nova Vitória":
+        return (
+          <div style={{ marginTop: "15px" }}>
+            <div style={{ color: "red", fontWeight: "bold", fontSize: "15px" }}>Sobreposição detectada</div>
+            <div>Área total do assentamento: 560.85 ha</div>
+            <div>Área sobreposta total: 477.13 ha</div>
+            <div>Porcentagem de sobreposição: 85.1%</div>
+            <div style={{ fontWeight: "bold", marginTop: "5px" }}>Sobreposição com a camada:</div>
+            <ul style={{ margin: "5px 0", paddingLeft: "20px" }}>
+              <li style={{ fontWeight: "bold" }}>UC Estaduais: 477.13 ha (85.1%)</li>
+            </ul>
+            <div>Categoria: Área de Proteção Ambiental</div>
+            <div>Grupo: Uso Sustentável</div>
+          </div>
+        );
+      case "PA São João":
+        return (
+          <div style={{ marginTop: "15px" }}>
+            <div style={{ color: "red", fontWeight: "bold", fontSize: "15px" }}>Sobreposição detectada</div>
+            <div>Área total do assentamento: 1060.32 ha</div>
+            <div>Área sobreposta total: 1060.32 ha</div>
+            <div>Porcentagem de sobreposição: 100.0%</div>
+            <div style={{ fontWeight: "bold", marginTop: "5px" }}>Sobreposição com a camada:</div>
+            <ul style={{ margin: "5px 0", paddingLeft: "20px" }}>
+              <li style={{ fontWeight: "bold" }}>UC Estaduais: 1060.32 ha (100.0%)</li>
+            </ul>
+            <div>Categoria: Área de Proteção Ambiental</div>
+            <div>Grupo: Uso Sustentável</div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div style={{ fontFamily: "'Barlow', sans-serif" }}>
+      <div style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "50px",
+        backgroundColor: "#ffffff",
+        borderBottom: "1px solid #ccc",
+        zIndex: 1001,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingLeft: "11px",
+        paddingRight: "11px"
+      }}>
+        <img src="logo_page_31.png" alt="Logo" style={{ height: "40px", objectFit: "contain" }} />
+        <img src="/marca-arapyau.png" alt="Arapyaú" style={{ height: "35px", objectFit: "contain" }} />
+      </div>
+
+      {/* Caixa seletora e switches */}
+      <div 
+        ref={caixaRef}
+        style={{
+          position: "absolute",
+          top: "70px",
+          left: "20px",
+          zIndex: 1000,
+          backgroundColor: "white",
+          padding: "15px",
+          borderRadius: "12px",
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+          width: "260px"
+        }}
+      >
+        <label htmlFor="seletor" style={{ fontWeight: "600", marginBottom: "8px", display: "block", fontSize: "15px" }}>
+          Selecione um Assentamento
+        </label>
+        <select
+          id="seletor"
+          value={projetoSelecionado}
+          onChange={(e) => setProjetoSelecionado(e.target.value)}
+          style={{
+            padding: "8px 10px",
+            borderRadius: "8px",
+            border: "1px solid #ccc",
+            width: "100%",
+            fontFamily: "'Barlow', sans-serif"
+          }}
+        >
+          <option value="TODOS"> Todos </option>
+          {nomeProjetos.map((nome) => (
+            <option key={nome} value={nome}>{nome}</option>
+          ))}
+        </select>
+
+        {/* Switches de camadas */}
+        <div style={{ marginTop: "20px" }}>
+          <strong style={{ display: "block", marginBottom: "10px", fontSize: "15px" }}>Marque/Desmarque a camada</strong>
+          {Object.keys(layersVisiveis).map((layer) => (
+            <div key={layer} style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              marginBottom: "10px"
+            }}>
+              <label className="switch" style={{ marginRight: "10px" }}>
+                <input
+                  type="checkbox"
+                  checked={layersVisiveis[layer]}
+                  onChange={() => setLayersVisiveis(prev => ({ ...prev, [layer]: !prev[layer] }))}
+                />
+                <span className="slider round"></span>
+              </label>
+              <span style={{ fontSize: "13px" }}>
+                {layer === "UC Estaduais" ? "Unidades de Conservação Estaduais" : 
+                 layer === "UC Federais" ? "Unidades de Conservação Federais" :
+                 layer === "UC Municipais" ? "Unidades de Conservação Municipais" : layer}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Caixa de mensagens condicionais */}
+        {projetoSelecionado !== "TODOS" && (
+          <div style={{
+            marginTop: "20px",
+            padding: "10px",
+            borderTop: "1px solid #eee",
+            fontSize: "13px"
+          }}>
+            {renderMensagemCondicional()}
+          </div>
+        )}
+      </div>
+
+      {/* Caixa de legenda - Posição dinâmica */}
+      <div style={{
+        position: "absolute",
+        top: `${80 + caixaAltura}px`, // 70px (top da caixa) + 10px de margem + altura dinâmica
+        left: "20px",
+        zIndex: 1000,
+        backgroundColor: "white",
+        padding: "15px",
+        borderRadius: "12px",
+        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+        width: "260px",
+        transition: "top 0.3s ease"
+      }}>
+        <strong style={{ display: "block", marginBottom: "10px", fontSize: "15px" }}>Legenda</strong>
+        <div style={{ marginBottom: "8px", display: "flex", alignItems: "center" }}>
+          <div style={{
+            width: "15px",
+            height: "15px",
+            backgroundColor: "#f28f3b",
+            marginRight: "10px",
+            border: "1px solid #ccc"
+          }}></div>
+          <span style={{ fontSize: "13px" }}>Assentamentos</span>
+        </div>
+        <div style={{ marginBottom: "8px", display: "flex", alignItems: "center" }}>
+          <div style={{
+            width: "15px",
+            height: "15px",
+            backgroundColor: "#ffd5c2",
+            marginRight: "10px",
+            border: "1px solid #ccc"
+          }}></div>
+          <span style={{ fontSize: "13px" }}>Terras Indígenas</span>
+        </div>
+        <div style={{ marginBottom: "8px", display: "flex", alignItems: "center" }}>
+          <div style={{
+            width: "15px",
+            height: "15px",
+            backgroundColor: "#c8553d",
+            marginRight: "10px",
+            border: "1px solid #ccc"
+          }}></div>
+          <span style={{ fontSize: "13px" }}>Terras Quilombolas</span>
+        </div>
+        <div style={{ marginBottom: "8px", display: "flex", alignItems: "center" }}>
+          <div style={{
+            width: "15px",
+            height: "15px",
+            backgroundColor: "#2d3047",
+            marginRight: "10px",
+            border: "1px solid #ccc"
+          }}></div>
+          <span style={{ fontSize: "13px" }}>Unidades de Conservação Estaduais</span>
+        </div>
+        <div style={{ marginBottom: "8px", display: "flex", alignItems: "center" }}>
+          <div style={{
+            width: "15px",
+            height: "15px",
+            backgroundColor: "#588b8b",
+            marginRight: "10px",
+            border: "1px solid #ccc"
+          }}></div>
+          <span style={{ fontSize: "13px" }}>Unidades de Conservação Federais</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <div style={{
+            width: "15px",
+            height: "15px",
+            backgroundColor: "#93b7be",
+            marginRight: "10px",
+            border: "1px solid #ccc"
+          }}></div>
+          <span style={{ fontSize: "13px" }}>Unidades de Conservação Municipais</span>
+        </div>
+      </div>
+
+      {/* Mapa */}
+      <div style={{ height: "100vh", width: "100%" }}>
+        <MapContainer
+          center={[-13.3, -43.4]}
+          zoom={6}
+          zoomControl={false}
+          style={{ height: "100%", width: "100%" }}
+        >
+          <TileLayer
+            attribution='© Mapbox © OpenStreetMap'
+            url="https://api.mapbox.com/styles/v1/mapbox/light-v10/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoibG9yZW5hZmVycmF6IiwiYSI6ImNtOWg4dmpjazAyc3YyanByN3Z0cHozYmoifQ.M7Ej_-O2hEESh6GQinPfrQ"
+            tileSize={512}
+            zoomOffset={-1}
+          />
+          <ZoomControl position="bottomleft" />
+
+          {assentamentos && (
+            <>
+              <GeoJSON
+                data={
+                  projetoSelecionado === "TODOS"
+                    ? assentamentos
+                    : {
+                        ...assentamentos,
+                        features: assentamentos.features.filter(
+                          (f) => f.properties.nome_proje === projetoSelecionado
+                        )
+                      }
+                }
+                style={{ color: "#f28f3b", weight: 1, fillOpacity: 0.5 }}
+                onEachFeature={onEachFeature}
+              />
+              <ZoomToFeature geojson={assentamentos} nomeProje={projetoSelecionado} />
+            </>
+          )}
+
+          {Object.entries(layersExtras).map(([name, { data, color }]) =>
+            layersVisiveis[name] ? (
+              <GeoJSON
+                key={name}
+                data={data}
+                style={{ color, fillOpacity: 0.4, weight: 1}}
+                onEachFeature={onEachFeature}
+              />
+            ) : null
+          )}
+        </MapContainer>
+      </div>
+
+      {/* Estilo do interruptor */}
+      <style>
+        {`
+        .switch {
+          position: relative;
+          display: inline-block;
+          width: 28px;
+          height: 14px;
+        }
+        .switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+        .slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background-color: white;
+          border: 1px solid #ccc;
+          transition: .3s;
+          border-radius: 14px;
+        }
+        .slider:before {
+          position: absolute;
+          content: "";
+          height: 10px;
+          width: 10px;
+          left: 2px;
+          bottom: 1px;
+          background-color: #888;
+          transition: .3s;
+          border-radius: 50%;
+        }
+        input:checked + .slider {
+          background-color: #d3d3d3;
+        }
+        input:checked + .slider:before {
+          transform: translateX(12px);
+          background-color: white;
+        }
+        `}
+      </style>
+    </div>
+  );
+};
+
+export default MapaComponent;
